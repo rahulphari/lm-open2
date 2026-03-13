@@ -403,6 +403,7 @@
             <div class="mb-5 bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-sm text-indigo-800">
                 <div class="font-semibold mb-1">How to pick vehicles (Quick Guide)</div>
                 <ul class="list-disc list-inside space-y-1">
+                    <li>First, select your <span class="font-semibold">Destination Center</span> code from the dropdown below to view incoming vehicles targeting your facility.</li>
                     <li>Click a <span class="font-semibold">Trip ID</span> to open Midmile and manually verify if it arrives before the AVTD cut‑off tomorrow morning.</li>
                     <li>This manual method is slower. The faster way is the <span class="font-semibold">Paste List</span> button — paste raw vehicle numbers from Midmile.</li>
                     <li>Tip: Need help? Contact your operations support team for clarification.</li>
@@ -411,12 +412,19 @@
 
             <div class="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden flex flex-col h-[70vh]">
                 <!-- Toolbar -->
-                <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                    <div class="relative w-96">
-                        <input type="text" id="vehicleSearchInput" class="w-full border border-slate-300 rounded-lg py-2 px-3 pl-9 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Search by Vehicle No, Trip ID..." onkeyup="handleVehicleSearch()">
-                        <i data-lucide="search" class="absolute left-3 top-2.5 w-4 h-4 text-slate-400"></i>
+                <div class="p-4 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-50 gap-4">
+                    <div class="flex flex-col md:flex-row items-start md:items-center gap-4 w-full md:w-auto">
+                        <div class="relative w-full md:w-64">
+                            <select id="destCenterSelect" class="w-full border border-slate-300 rounded-lg py-2 px-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-indigo-700" onchange="filterTransitByDestCenter()">
+                                <option value="">Select Destination Center...</option>
+                            </select>
+                        </div>
+                        <div class="relative w-full md:w-64">
+                            <input type="text" id="vehicleSearchInput" class="w-full border border-slate-300 rounded-lg py-2 px-3 pl-9 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Search by Vehicle No, Trip ID..." onkeyup="handleVehicleSearch()">
+                            <i data-lucide="search" class="absolute left-3 top-2.5 w-4 h-4 text-slate-400"></i>
+                        </div>
                     </div>
-                    <div class="flex gap-2 text-sm">
+                    <div class="flex gap-2 text-sm w-full md:w-auto justify-between md:justify-end mt-2 md:mt-0">
                         <span class="text-slate-500">Selected: <strong id="vehicleCountDisplay" class="text-indigo-600">0</strong></span>
                         <span class="text-slate-300">|</span>
                         <button onclick="resetSelection()" class="text-slate-500 hover:text-red-600">Reset Selection</button>
@@ -1046,6 +1054,7 @@
         let GLOBAL_DATA = [];
         let GLOBAL_PENDING_DATA = []; 
         let GLOBAL_TRANSIT_DATA = []; 
+        let GLOBAL_ALL_TRANSIT_DATA = []; // NEW
         let GLOBAL_DISPLAY_DATA = [];
         let GLOBAL_EXCLUDED_DATA = []; // NEW
         let GLOBAL_SELECTED_TRANSIT_DATA = [];
@@ -1515,9 +1524,11 @@
             GLOBAL_DATA = [];
             GLOBAL_PENDING_DATA = []; 
             GLOBAL_TRANSIT_DATA = []; 
+            GLOBAL_ALL_TRANSIT_DATA = []; // NEW
             GLOBAL_EXCLUDED_DATA = []; // Reset excluded
             GLOBAL_SELECTED_TRANSIT_DATA = [];
             let uniquePins = new Set();
+            let destCenters = new Set(); // NEW
             
             data.forEach(row => {
                  const cnRaw = (row['cn']||'').toString().trim();
@@ -1533,9 +1544,10 @@
                  const selectedRaw = (SELECTED_FACILITY || '').toString().trim();
                  const selectedKey = selectedRaw.toLowerCase();
                  const selectedKeyNorm = selectedRaw.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase();
+                 
                  const isFromSelectedFacility = cn === selectedKey;
                  const isFloor = isFromSelectedFacility && status === 'pending';
-                 const isIncoming = (dest === selectedKey || dest === selectedKeyNorm || destRaw.toLowerCase() === cnNorm) && isFromSelectedFacility;
+                 const isIncoming = isFromSelectedFacility && status !== 'pending';
                  
                  // Exclusion Logic
                  if( isFloor || isIncoming ) {
@@ -1547,7 +1559,11 @@
                         row['source_type'] = isFloor ? 'Floor' : 'Incoming';
                         GLOBAL_DATA.push(row);
                         if(isFloor) GLOBAL_PENDING_DATA.push(row);
-                        if(isIncoming) GLOBAL_TRANSIT_DATA.push(row);
+                        if(isIncoming) {
+                            GLOBAL_ALL_TRANSIT_DATA.push(row);
+                            const dc = (row['destination_center'] || '').toString().trim();
+                            if(dc) destCenters.add(dc);
+                        }
                         
                         if(row['pin']) uniquePins.add(row['pin'].trim());
                     }
@@ -1560,7 +1576,17 @@
             safeSetText('statPendingCount', GLOBAL_PENDING_DATA.length);
             safeSetText('statPendingWt', totalWt.toFixed(0));
             
-            // IMPORTANT: Init vehicles here
+            // Populate the destination center dropdown
+            const destSelect = document.getElementById('destCenterSelect');
+            if(destSelect) {
+                destSelect.innerHTML = '<option value="">Select Destination Center...</option>';
+                Array.from(destCenters).sort().forEach(dc => {
+                    destSelect.innerHTML += `<option value="${dc}">${dc}</option>`;
+                });
+            }
+            
+            // IMPORTANT: Clear transit data until user selects a destination center
+            GLOBAL_TRANSIT_DATA = [];
             initVehicleData(); 
         }
 
@@ -1742,6 +1768,18 @@
         }
 
         // --- STEP 4: VEHICLES ---
+        function filterTransitByDestCenter() {
+            const dc = document.getElementById('destCenterSelect').value;
+            if(!dc) {
+                GLOBAL_TRANSIT_DATA = [];
+            } else {
+                GLOBAL_TRANSIT_DATA = GLOBAL_ALL_TRANSIT_DATA.filter(r => (r['destination_center'] || '').toString().trim() === dc);
+            }
+            document.querySelectorAll('.vehicle-checkbox').forEach(cb => cb.checked = false);
+            updateVehicleSelectionCount();
+            initVehicleData();
+        }
+
         function initVehicleData() {
             GLOBAL_VEHICLE_MAP = {};
             GLOBAL_TRANSIT_DATA.forEach(row => {
@@ -3276,4 +3314,4 @@
         }
     </script>
 </body>
-                        </html>
+    </html>
